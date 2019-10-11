@@ -18,6 +18,6 @@ struct Base_Variable
 
 int Lemke(const _int_lemke n, const _real_lemke *M, const _real_lemke *q,
           const _int_lemke max_iter, _int_lemke &num_iter,
-          _real_lemke *x, _real_lemke &error);
+          _real_lemke *x, _real_lemke *z, _real_lemke &error);
 
 #endif //_LEMKE_H

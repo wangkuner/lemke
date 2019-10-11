@@ -15,6 +15,9 @@
 
 #include <cstring>
 
+using std::memcpy;
+using std::memset;
+
 static int _Pivot(_real_lemke *M, const _int_lemke m, const _int_lemke n,
                   const _int_lemke i, const _int_lemke j, const _real_lemke eps)
 {
@@ -45,9 +48,14 @@ static int _Pivot(_real_lemke *M, const _int_lemke m, const _int_lemke n,
 
 int Lemke(const _int_lemke n, const _real_lemke *M, const _real_lemke *q,
           const _int_lemke max_iter, _int_lemke &num_iter,
-          _real_lemke *x, _real_lemke &error)
+          _real_lemke *x, _real_lemke *z, _real_lemke &error)
 {
     _int_lemke i = 0;
+    _int_lemke j = 0;
+    num_iter = 0;
+    error = 0.0;
+    memset(x, 0, sizeof(x[0]) * n);
+    memcpy(z, q, sizeof(x[0]) * n);
     while (i < n && q[i] > 0.0)
     {
         i++;
@@ -56,38 +64,31 @@ int Lemke(const _int_lemke n, const _real_lemke *M, const _real_lemke *q,
     {
         return 0;
     }
-    bool all_negative = false;
     _int_lemke s = 0;
     _int_lemke r = 0;
-    _int_lemke step = 0;
+    _int_lemke next_enter = 0;
     const _real_lemke eps = 1e-16;
-    _real_lemke *table = new _real_lemke[n * (n + 2)];
+    _int_lemke col = 2 * n + 2;
+    _real_lemke *table = new _real_lemke[n * col];
+    _int_lemke *leave_entry = new _int_lemke[n];
     _real_lemke min = 0.0;
-    Base_Variable(*base)[2] = new Base_Variable[n + 1][2];
-    Base_Variable(*xz)[2] = new Base_Variable[n + 1][2];
-    Base_Variable record;
-    Base_Variable temp;
+
+    memset(table, 0, sizeof(_real_lemke) * n * col);
     for (i = 0; i < n; i++)
     {
-        table[i * (n + 2)] = -1.0;
-        for (s = 0; s < n; s++)
+        table[i * col + i] = 1.0;
+        for (j = 0; j < n; j++)
         {
-            table[i * (n + 2) + s + 1] = -M[i * n + s];
+            table[i * col + n + j] = -M[i * n + j];
         }
-        table[i * (n + 2) + n + 1] = q[i];
-        base[i][0].type = Base_Type::zero;
-        base[i][0].id = i;
-        xz[i][0].type = Base_Type::zero;
-        xz[i][0].id = i;
-        base[i][1].type = Base_Type::one;
-        base[i][1].id = i;
-        xz[i][1].type = Base_Type::one;
-        xz[i][1].id = i;
+        table[i * col + n + n] = -1.0;
+        table[i * col + n + n + 1] = q[i];
+        // z index [0,n-1], x index [n,2n-1]. leave_entry[i] is z[i]
+        leave_entry[i] = i;
     }
-    base[n][0].type = Base_Type::zero;
-    base[n][0].id = n;
-    xz[n][0].type = Base_Type::zero;
-    xz[n][0].id = n;
+    // column 2*n
+    s = 2 * n;
+    // line r
     min = q[0];
     r = 0;
     for (i = 1; i < n; i++)
@@ -98,86 +99,116 @@ int Lemke(const _int_lemke n, const _real_lemke *M, const _real_lemke *q,
             r = i;
         }
     }
-    record.id = 0; //record y_s=x_0
-    record.type = Base_Type::zero;
-    //leave z_r, enter x_0
-    temp = base[r][1];
-    base[r][1] = record;
-    base[xz[record.id][static_cast<_int_lemke>(record.type)].id][0] = temp;
-    //record the new position of x and z
-    xz[temp.id][static_cast<_int_lemke>(temp.type)].type = Base_Type::zero;
-    xz[temp.id][static_cast<_int_lemke>(temp.type)].id = xz[record.id][static_cast<_int_lemke>(record.type)].id;
-    xz[record.id][static_cast<_int_lemke>(record.type)].type = Base_Type::one;
-    xz[record.id][static_cast<_int_lemke>(record.type)].id = r;
-    record.id = temp.id + 1; //record y_s=x_r
-    record.type = static_cast<Base_Type>(1 - static_cast<_int_lemke>(temp.type));
-    if (_Pivot(table, n, n + 2, r, 0, eps))
+    if (leave_entry[r] < n)
     {
+        next_enter = leave_entry[r] + n; // next enter entry is x[leave_entry[r]]
+    }
+    else
+    {
+        next_enter = leave_entry[r] - n; // next enter entry is z[leave_entry[r]-n]
+    }
+    leave_entry[r] = s;
+    if (_Pivot(table, n, col, r, s, eps))
+    {
+        if (table)
+        {
+            delete[] table;
+        }
+        table = nullptr;
+        if (leave_entry)
+        {
+            delete[] leave_entry;
+        }
+        leave_entry = nullptr;
         return 1;
     }
-    for (step = 0; step < max_iter; ++step)
+    for (num_iter = 0; num_iter < max_iter; ++num_iter)
     {
-        //find column s
-        s = xz[record.id][static_cast<_int_lemke>(record.type)].id;
-        //find line r
+        // find column s
+        s = next_enter;
+        // find line r
         i = 0;
-        while (i < n && table[i * (n + 2) + s] < 0.0)
+        while (i < n && table[i * col + s] < eps)
         {
             ++i;
         }
-        if (i >= n || table[i * (n + 2) + s] < eps)
+        // all elements are non-positive
+        if (i >= n || table[i * col + s] < eps)
         {
-            return 1;
+            break;
         }
-        min = table[i * (n + 2) + n + 1] / table[i * (n + 2) + s];
+        min = table[i * col + n + n + 1] / table[i * col + s];
         r = i;
         for (i = i + 1; i < n; i++)
         {
-            if (table[i * (n + 2) + s] > eps)
+            if (table[i * col + s] > eps)
             {
-                if (min > table[(i + 1) * (n + 2) - 1] / table[i * (n + 2) + s])
+                if (min > table[i * col + n + n + 1] / table[i * col + s])
                 {
-                    min = table[(i + 1) * (n + 2) - 1] / table[i * (n + 2) + s];
+                    min = table[i * col + n + n + 1] / table[i * col + s];
                     r = i;
                 }
             }
         }
-        //the enter base is x0
-        if (base[r][1].type == Base_Type::zero && base[r][1].id == 0)
+        //the leave base is x0
+        if (leave_entry[r] == n + n)
         {
-            if (_Pivot(table, n, n + 2, r, s, eps))
+            leave_entry[r] = s;
+            if (_Pivot(table, n, col, r, s, eps))
             {
+                if (table)
+                {
+                    delete[] table;
+                }
+                table = nullptr;
+                if (leave_entry)
+                {
+                    delete[] leave_entry;
+                }
+                leave_entry = nullptr;
                 return 1;
             }
-            base[r][1] = record;
             break;
         }
         else //leave z_r. enter y_s.
         {
-            temp = base[r][1];
-            base[r][1] = record; //leave z_r, enter x_0
-            base[xz[record.id][static_cast<_int_lemke>(record.type)].id][0] = temp;
-            xz[temp.id][static_cast<_int_lemke>(temp.type)].type = Base_Type::zero;
-            xz[temp.id][static_cast<_int_lemke>(temp.type)].id = xz[record.id][static_cast<_int_lemke>(record.type)].id;
-            xz[record.id][static_cast<_int_lemke>(record.type)].type = Base_Type::one;
-            xz[record.id][static_cast<_int_lemke>(record.type)].id = r;
-            record.id = temp.id + 1; //record y_s=x_s
-            record.type = static_cast<Base_Type>(1 - static_cast<_int_lemke>(temp.type));
-            if (_Pivot(table, n, n + 2, r, s, eps))
+            if (leave_entry[r] < n)
             {
+                next_enter = leave_entry[r] + n; // next enter entry is x[leave_entry[r]]
+            }
+            else
+            {
+                next_enter = leave_entry[r] - n; // next enter entry is z[leave_entry[r]-n]
+            }
+            leave_entry[r] = s;
+            if (_Pivot(table, n, col, r, s, eps))
+            {
+                if (table)
+                {
+                    delete[] table;
+                }
+                table = nullptr;
+                if (leave_entry)
+                {
+                    delete[] leave_entry;
+                }
+                leave_entry = nullptr;
                 return 1;
             }
         }
     }
-    memset(x, 0, sizeof(x[0]) * n);
+    memset(z, 0, sizeof(x[0]) * n);
     for (i = 0; i < n; i++)
     {
-        if (base[i][1].type == Base_Type::zero)
+        if (leave_entry[i] < n)
         {
-            x[base[i][1].id - 1] = table[(i + 1) * (n + 2) - 1];
+            z[leave_entry[i]] = table[i * col + n + n + 1];
+        }
+        else if (leave_entry[i] < n + n)
+        {
+            x[leave_entry[i] - n] = table[i * col + n + n + 1];
         }
     }
-    num_iter = step;
     error = 0.0;
     for (i = 0; i < n; i++)
     {
@@ -193,15 +224,11 @@ int Lemke(const _int_lemke n, const _real_lemke *M, const _real_lemke *q,
         delete[] table;
     }
     table = nullptr;
-    if (xz)
+    if (leave_entry)
     {
-        delete[] xz;
+        delete[] leave_entry;
     }
-    xz = nullptr;
-    if (base)
-    {
-        delete[] base;
-    }
-    base = nullptr;
+    leave_entry = nullptr;
+
     return 0;
 }
